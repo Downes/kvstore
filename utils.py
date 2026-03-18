@@ -1,65 +1,31 @@
-# utils.py
-from functools import wraps
-from flask import request, jsonify
-from flask_login import current_user
-import jwt
-from datetime import datetime, timedelta
-from config import Config
-import os
-import logging
-from dotenv import load_dotenv
+# utils.py — token generation and hashing helpers
+import hashlib
+import secrets
+from datetime import datetime, timedelta, timezone
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+TOKEN_LIFETIME_DAYS = 365
 
 
-# ------------------------------------------------------------------------------
-# LOGIN FUNCTIONS
-# ------------------------------------------------------------------------------
+def generate_opaque_token(username):
+    """Return a token in 'username:hex32' format.
+    The username prefix lets the server locate the right per-user DB
+    without a separate token-lookup table."""
+    return f"{username}:{secrets.token_hex(32)}"
 
-def login_required_json(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if not current_user.is_authenticated:
-            return jsonify({'error': 'You must be logged in to access this resource'}), 401
-        return f(*args, **kwargs)
-    return decorated_function
 
-def generate_token(user_id):
-    expiration = datetime.utcnow() + timedelta(hours=1)  # Token expires in 1 hour
-    token = jwt.encode({
-        'user_id': user_id,
-        'exp': expiration
-    }, Config.SECRET_KEY, algorithm='HS256')
-    return token
+def hash_token(token):
+    """SHA-256 hash of a token for safe DB storage."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
-# ------------------------------------------------------------------------------
-# FUNCTION TO LOAD SEED ONLY WHEN NEEDED
-# ------------------------------------------------------------------------------
 
-# Store seed in a module-level variable to prevent multiple lookups
-_seed = None
+def token_expiry():
+    """Return expiry datetime for a freshly issued token."""
+    return datetime.now(timezone.utc) + timedelta(days=TOKEN_LIFETIME_DAYS)
 
-def get_seed():
-    """Load SEED only when needed."""
-    global _seed  # Store the seed to avoid redundant lookups
 
-    if _seed is None:
-        load_dotenv()
-        seed = os.getenv("SEED")
-
-        # If SEED is still missing, try loading from /etc/secrets.env (Apache/Gunicorn)
-        if seed is None and os.path.exists("/etc/secrets.env"):
-            with open("/etc/secrets.env") as f:
-                for line in f:
-                    if line.startswith("SEED="):
-                        seed = line.strip().split("=", 1)[1]
-
-        if seed is None:
-            logging.error("SEED environment variable is not set! Ensure it is configured securely.")
-            raise ValueError("Missing required SEED environment variable.")
-
-        _seed = seed  # Cache seed in memory
-        logging.info("SEED has been successfully loaded.")
-
-    return _seed
+def parse_token(raw_token):
+    """Split 'username:hex' into (username, raw_token). Returns (None, None) if malformed."""
+    parts = raw_token.split(':', 1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None, None
+    return parts[0], raw_token

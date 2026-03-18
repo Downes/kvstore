@@ -1,7 +1,2 @@
-import sys
-path = '/var/www/webroot/ROOT'
-if path not in sys.path:
-    sys.path.append(path)
-from app import app
-application = app
-
+# wsgi.py — Gunicorn entry point
+from app import app as application

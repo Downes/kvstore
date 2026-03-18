@@ -1,0 +1,17 @@
+services:
+  kvstore:
+    build: .
+    container_name: kvstore
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - kvstore_data:/data
+    networks:
+      - web
+
+volumes:
+  kvstore_data:
+
+networks:
+  web:
+    external: true

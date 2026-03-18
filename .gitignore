@@ -1,0 +1,7 @@
+.env
+*.log
+__pycache__/
+*.pyc
+*.db
+migration_decrypted.json
+migration_export.json
