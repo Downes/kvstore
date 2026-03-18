@@ -1,10 +1,11 @@
 # auth.py — registration, login, logout routes (JSON API)
 import bcrypt
 import logging
+from datetime import datetime
 from flask import Blueprint, request, jsonify
 from db_utils import get_user_session
 from models_user_kv import User
-from utils import generate_opaque_token, hash_token, token_expiry
+from utils import generate_opaque_token, hash_token, parse_token, token_expiry
 from extensions import limiter
 
 auth_bp = Blueprint('auth', __name__)
@@ -14,6 +15,31 @@ log = logging.getLogger(__name__)
 def _valid_auth_hash(h):
     """auth_hash must be a 64-character lowercase hex string (256-bit PBKDF2 output)."""
     return isinstance(h, str) and len(h) == 64 and all(c in '0123456789abcdef' for c in h)
+
+
+@auth_bp.route("/verify", methods=["GET"])
+def verify():
+    """Validate a Bearer token. Returns 200 + username if valid, 401 if not.
+    Used by proxyp (and any other internal service) to check kvstore auth."""
+    auth_header = request.headers.get('Authorization', '')
+    parts = auth_header.split()
+    if len(parts) != 2 or parts[0].lower() != 'bearer':
+        return jsonify({'error': 'Authorization header required'}), 401
+
+    username, raw_token = parse_token(parts[1])
+    if not username:
+        return jsonify({'error': 'Malformed token'}), 401
+
+    session = get_user_session(username)
+    try:
+        user = session.query(User).filter_by(username=username).first()
+        if not user or user.api_token_hash != hash_token(raw_token):
+            return jsonify({'error': 'Invalid token'}), 401
+        if user.token_expires and user.token_expires < datetime.utcnow():
+            return jsonify({'error': 'Token expired'}), 401
+        return jsonify({'username': username}), 200
+    finally:
+        session.close()
 
 
 @auth_bp.route("/register", methods=["POST"])
