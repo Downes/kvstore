@@ -1,6 +1,6 @@
 # app.py — Flask application factory for kvstore JSON API
 import logging
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from config import Config
 from auth import auth_bp
 from routes import routes_bp
@@ -22,7 +22,7 @@ def create_app():
     @app.after_request
     def cors_headers(response):
         origin = request.headers.get('Origin', '')
-        if origin == Config.CORS_ORIGIN:
+        if origin in Config.CORS_ORIGIN:
             response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Credentials'] = 'true'
             if request.method == 'OPTIONS':
@@ -36,6 +36,11 @@ def create_app():
     @app.route('/health')
     def health():
         return {'status': 'ok'}
+
+    @app.route('/.well-known/jwks.json')
+    def jwks():
+        from jwt_utils import get_jwks
+        return jsonify(get_jwks())
 
     return app
 

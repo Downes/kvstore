@@ -8,6 +8,7 @@ from flask import Blueprint, request, jsonify
 from db_utils import get_user_session
 from models_user_kv import KeyValue, User
 from utils import hash_token, parse_token
+from jwt_utils import is_jwt, verify_jwt
 from functools import wraps
 
 routes_bp = Blueprint('routes', __name__)
@@ -22,7 +23,7 @@ DISCUSSION_EXPIRY = 300  # seconds
 # ------------------------------------------------------------------------------
 
 def token_required(f):
-    """Decorator: verify opaque Bearer token, inject username into route."""
+    """Decorator: verify Bearer token (JWT or opaque), inject username into route."""
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get('Authorization', '')
@@ -30,7 +31,17 @@ def token_required(f):
         if len(parts) != 2 or parts[0].lower() != 'bearer':
             return jsonify({'error': 'Authorization header required'}), 401
 
-        username, raw_token = parse_token(parts[1])
+        token_str = parts[1]
+
+        # JWT path — verify cryptographically, no DB lookup needed
+        if is_jwt(token_str):
+            username = verify_jwt(token_str)
+            if not username:
+                return jsonify({'error': 'Invalid or expired token'}), 401
+            return f(username, *args, **kwargs)
+
+        # Opaque token path — kept for backwards compatibility with existing sessions
+        username, raw_token = parse_token(token_str)
         if not username:
             return jsonify({'error': 'Malformed token'}), 401
 

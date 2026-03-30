@@ -6,6 +6,8 @@ from flask import Blueprint, request, jsonify
 from db_utils import get_user_session
 from models_user_kv import User
 from utils import generate_opaque_token, hash_token, parse_token, token_expiry
+from jwt_utils import is_jwt, issue_jwt, verify_jwt
+from config import Config
 from extensions import limiter
 
 auth_bp = Blueprint('auth', __name__)
@@ -26,7 +28,17 @@ def verify():
     if len(parts) != 2 or parts[0].lower() != 'bearer':
         return jsonify({'error': 'Authorization header required'}), 401
 
-    username, raw_token = parse_token(parts[1])
+    token_str = parts[1]
+
+    # JWT path — verify cryptographically, no DB lookup needed
+    if is_jwt(token_str):
+        username = verify_jwt(token_str)
+        if not username:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+        return jsonify({'username': username}), 200
+
+    # Opaque token path — kept for backwards compatibility with existing sessions
+    username, raw_token = parse_token(token_str)
     if not username:
         return jsonify({'error': 'Malformed token'}), 401
 
@@ -98,16 +110,12 @@ def login():
         if not bcrypt.checkpw(bytes.fromhex(auth_hash), user.auth_hash.encode()):
             return jsonify({'error': 'Invalid credentials'}), 401
 
-        token = generate_opaque_token(username)
-        user.api_token_hash = hash_token(token)
-        user.token_expires = token_expiry()
-        session.commit()
         log.info("Login successful: %s", username)
-
+        token, expires = issue_jwt(username, Config.ISSUER_URL)
         return jsonify({
             'token': token,
             'username': username,
-            'expires': user.token_expires.isoformat(),
+            'expires': expires.isoformat(),
         }), 200
     finally:
         session.close()
@@ -124,8 +132,12 @@ def logout():
     if len(parts) != 2 or parts[0].lower() != 'bearer':
         return jsonify({'error': 'No valid token'}), 401
 
+    token_str = parts[1]
+    if is_jwt(token_str):
+        return jsonify({'message': 'Logged out'}), 200
+
     from utils import parse_token
-    username, raw_token = parse_token(parts[1])
+    username, raw_token = parse_token(token_str)
     if not username:
         return jsonify({'error': 'Malformed token'}), 401
 
