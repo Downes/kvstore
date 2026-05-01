@@ -4,7 +4,9 @@ import json
 import time
 import logging
 from datetime import datetime
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
+from urllib.parse import urlparse
+from config import Config
 from db_utils import get_user_session
 from models_user_kv import KeyValue, User
 from utils import hash_token, parse_token
@@ -200,3 +202,53 @@ def manage_discussions():
             return jsonify({'error': 'Discussion not found'}), 404
         save(updated)
         return jsonify({'message': 'Removed'}), 200
+
+
+# ------------------------------------------------------------------------------
+# DID DOCUMENT
+# ------------------------------------------------------------------------------
+
+@routes_bp.route('/users/<username>/did.json', methods=['GET'])
+def get_did_document(username):
+    """Public DID document endpoint. Resolves did:web:...:users:<username>."""
+    session = get_user_session(username)
+    try:
+        user = session.query(User).filter_by(username=username).first()
+        if not user or not user.did_document:
+            return jsonify({'error': 'DID not found'}), 404
+        try:
+            profile = json.loads(user.did_document)
+        except (ValueError, TypeError):
+            return jsonify({'error': 'DID profile corrupt'}), 500
+    finally:
+        session.close()
+
+    domain  = urlparse(Config.ISSUER_URL).netloc
+    did_web = f"did:web:{domain}:users:{username}"
+    key_id  = f"{did_web}#key-1"
+
+    services = [{
+        'id': f"{did_web}#kvstore",
+        'type': 'KVStore',
+        'serviceEndpoint': Config.ISSUER_URL,
+    }] + profile.get('service', [])
+
+    doc = {
+        '@context': [
+            'https://www.w3.org/ns/did/v1',
+            'https://w3id.org/security/suites/jws-2020/v1',
+        ],
+        'id': did_web,
+        'alsoKnownAs': [profile['didKey']] + profile.get('alsoKnownAs', []),
+        'verificationMethod': [{
+            'id': key_id,
+            'type': 'JsonWebKey2020',
+            'controller': did_web,
+            'publicKeyJwk': profile['publicKeyJwk'],
+        }],
+        'authentication': [key_id],
+        'assertionMethod': [key_id],
+        'service': services,
+    }
+
+    return Response(json.dumps(doc, indent=2), status=200, mimetype='application/did+ld+json')

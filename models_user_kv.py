@@ -12,6 +12,7 @@ class User(Base):
     auth_hash = Column(String(200), nullable=False)   # bcrypt(auth_hash from client)
     api_token_hash = Column(String(64), nullable=True)  # sha256(opaque_token)
     token_expires = Column(DateTime, nullable=True)
+    did_document = Column(Text, nullable=True)
 
 
 class KeyValue(Base):

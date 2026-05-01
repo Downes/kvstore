@@ -1,4 +1,7 @@
 # auth.py — registration, login, logout routes (JSON API)
+import base64
+import json
+import re
 import bcrypt
 import logging
 from datetime import datetime
@@ -69,6 +72,8 @@ def register():
 
     if not username:
         return jsonify({'error': 'username is required'}), 400
+    if not re.match(r'^[a-z0-9][a-z0-9._-]{2,31}$', username):
+        return jsonify({'error': 'Username must be 3–32 characters, start with a letter or digit, and contain only letters, digits, dots, hyphens, and underscores'}), 400
     if not _valid_auth_hash(auth_hash):
         return jsonify({'error': 'auth_hash must be a 64-char lowercase hex string'}), 400
 
@@ -151,3 +156,113 @@ def logout():
         return jsonify({'message': 'Logged out'}), 200
     finally:
         session.close()
+
+
+@auth_bp.route("/did", methods=["PUT"])
+def register_did():
+    """Register or update the user's Ed25519 public key and DID profile.
+    Stores user-controlled parts; full DID document is assembled at serve time."""
+
+    # Verify auth (same pattern as /verify)
+    auth_header = request.headers.get('Authorization', '')
+    parts = auth_header.split()
+    if len(parts) != 2 or parts[0].lower() != 'bearer':
+        return jsonify({'error': 'Authorization header required'}), 401
+    token_str = parts[1]
+    if is_jwt(token_str):
+        username = verify_jwt(token_str)
+        if not username:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+    else:
+        username, raw_token = parse_token(token_str)
+        if not username:
+            return jsonify({'error': 'Malformed token'}), 401
+        session = get_user_session(username)
+        try:
+            user = session.query(User).filter_by(username=username).first()
+            if not user or user.api_token_hash != hash_token(raw_token):
+                return jsonify({'error': 'Invalid token'}), 401
+        finally:
+            session.close()
+
+    data = request.get_json(silent=True) or {}
+    jwk          = data.get('publicKeyJwk')
+    did_key      = data.get('didKey', '')
+    services     = data.get('service', [])
+    also_known_as = data.get('alsoKnownAs', [])
+
+    # Validate Ed25519 OKP JWK
+    if not jwk or jwk.get('kty') != 'OKP' or jwk.get('crv') != 'Ed25519' or not jwk.get('x'):
+        return jsonify({'error': 'publicKeyJwk must be an Ed25519 OKP JWK with x coordinate'}), 400
+    try:
+        x_bytes = base64.urlsafe_b64decode(jwk['x'] + '==')
+        if len(x_bytes) != 32:
+            raise ValueError
+    except Exception:
+        return jsonify({'error': 'publicKeyJwk.x must be base64url-encoded 32 bytes'}), 400
+
+    # Validate client-computed did:key (Ed25519 did:key always starts did:key:z6Mk)
+    if not re.match(r'^did:key:z6Mk[1-9A-HJ-NP-Za-km-z]+$', did_key):
+        return jsonify({'error': 'didKey must be a valid Ed25519 did:key (did:key:z6Mk...)'}), 400
+
+    # Validate services array
+    if not isinstance(services, list):
+        return jsonify({'error': 'service must be an array'}), 400
+    for svc in services:
+        if not all(k in svc for k in ('id', 'type', 'serviceEndpoint')):
+            return jsonify({'error': 'each service must have id, type, and serviceEndpoint'}), 400
+
+    # Validate alsoKnownAs array
+    if not isinstance(also_known_as, list) or not all(isinstance(a, str) for a in also_known_as):
+        return jsonify({'error': 'alsoKnownAs must be an array of strings'}), 400
+
+    profile = {'publicKeyJwk': jwk, 'didKey': did_key, 'service': services, 'alsoKnownAs': also_known_as}
+    session = get_user_session(username)
+    try:
+        user = session.query(User).filter_by(username=username).first()
+        user.did_document = json.dumps(profile)
+        session.commit()
+    finally:
+        session.close()
+
+    log.info("DID profile registered for %s: %s", username, did_key)
+    return jsonify({'message': 'DID profile registered', 'didKey': did_key}), 200
+
+
+@auth_bp.route("/did", methods=["DELETE"])
+def delete_did():
+    """Remove the user's DID profile. The public DID document will return 404 after this."""
+
+    auth_header = request.headers.get('Authorization', '')
+    parts = auth_header.split()
+    if len(parts) != 2 or parts[0].lower() != 'bearer':
+        return jsonify({'error': 'Authorization header required'}), 401
+    token_str = parts[1]
+    if is_jwt(token_str):
+        username = verify_jwt(token_str)
+        if not username:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+    else:
+        username, raw_token = parse_token(token_str)
+        if not username:
+            return jsonify({'error': 'Malformed token'}), 401
+        session = get_user_session(username)
+        try:
+            user = session.query(User).filter_by(username=username).first()
+            if not user or user.api_token_hash != hash_token(raw_token):
+                return jsonify({'error': 'Invalid token'}), 401
+        finally:
+            session.close()
+
+    session = get_user_session(username)
+    try:
+        user = session.query(User).filter_by(username=username).first()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        user.did_document = None
+        session.commit()
+    finally:
+        session.close()
+
+    log.info("DID profile removed for %s", username)
+    return jsonify({'message': 'DID profile removed'}), 200
