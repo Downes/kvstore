@@ -215,5 +215,5 @@ For the full authentication design including the zero-knowledge key derivation m
 
 ## Licence
 
-Copyright National Research Council of Canada 2025
+Copyright Stephen Downes
 Licensed under [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/)
