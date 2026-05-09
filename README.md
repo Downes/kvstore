@@ -142,6 +142,77 @@ The server operator cannot decrypt stored credentials — they never possess the
 
 See [SECURITY.md](SECURITY.md) for the full threat model.
 
+## Integrating kvstore authentication into your app
+
+kvstore acts as a lightweight identity provider. Users log in to kvstore once; your app accepts their token without ever calling kvstore again.
+
+### How it works
+
+1. The user's browser derives an `authHash = PBKDF2(password, username+"_auth", 100k)` and POSTs it to `/auth/login`. kvstore returns a signed **ES256 JWT**.
+2. The browser sends that JWT as a `Bearer` token with requests to your app.
+3. Your app verifies the JWT locally using kvstore's public JWKS endpoint — no callback needed.
+
+The JWT `iss` claim carries the kvstore URL, so your app doesn't need to know it in advance. Users running their own kvstore instance work automatically.
+
+### Verifying a token — Node.js
+
+```js
+import { createRemoteJWKSet, jwtVerify } from 'jose';
+
+// issuerUrl comes from the JWT's `iss` claim, or from the user's stored kvstore URL
+const jwks = createRemoteJWKSet(new URL(`${issuerUrl}/.well-known/jwks.json`));
+const { payload } = await jwtVerify(token, jwks, { issuer: issuerUrl });
+const username = payload.sub; // authenticated username
+```
+
+### Verifying a token — Python
+
+```python
+import requests
+from jwt import PyJWT
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+# Fetch the public key once and cache it
+jwks = requests.get(f"{issuer_url}/.well-known/jwks.json").json()
+# Convert JWKS to PEM and verify using PyJWT + cryptography
+# See jwt_utils.py in this repo for a full implementation
+```
+
+See [jwt_utils.py](jwt_utils.py) for the complete Python verification used by kvstore itself.
+
+### JWKS endpoint
+
+```
+GET /.well-known/jwks.json   (public, no auth required)
+```
+
+Returns an EC P-256 public key in standard JWKS format. Cache it — it only changes if the server is rebuilt from scratch.
+
+### JWT claims
+
+| Claim | Value |
+|-------|-------|
+| `sub` | Username — use this as the authenticated identity |
+| `iss` | kvstore URL — use this to find the JWKS endpoint |
+| `exp` | 30 days from login |
+
+### Letting users bring their own kvstore
+
+Don't hardcode a kvstore URL. Add a "Identity server" field to your login form and store the URL in `localStorage` alongside the token. Any user running a self-hosted kvstore instance will work without any changes on your end — the `iss` claim in their JWT points to their server automatically.
+
+### `/auth/verify` — legacy callback verification
+
+If your backend can't do local JWT verification, you can fall back to a server-side call:
+
+```http
+GET /auth/verify
+Authorization: Bearer <token>
+```
+
+Returns `200 {"username": "alice", "valid": true}` or `401`. Use local verification (above) in preference — it's faster and doesn't create a dependency on kvstore being reachable at request time.
+
+For the full authentication design including the zero-knowledge key derivation model, see [AUTH.md](AUTH.md).
+
 ## Licence
 
 Copyright National Research Council of Canada 2025
