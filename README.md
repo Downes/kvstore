@@ -1,4 +1,22 @@
-# kvstore
+# kvstore — Your Keys. Your Data. Your Server.
+
+kvstore is a lightweight, self-hosted identity and storage layer for web applications. It gives your users a single secure account they control — credentials, settings, tokens — without trusting any platform with their data.
+
+**Zero-knowledge by design.** Your password never leaves your device. kvstore derives your encryption key locally using PBKDF2, so everything stored on the server is ciphertext the server can never read. Not us, not an attacker with a database dump.
+
+**Federated authentication.** Log in once. kvstore issues a signed JWT that any participating app can verify independently — no callback required, no shared session infrastructure. Build a constellation of small apps that all trust the same identity without coupling them together.
+
+**Decentralized identity built in.** Every kvstore account has a `did:web` document out of the box, so your identity is portable, verifiable, and yours — not locked to a platform.
+
+**Runs anywhere Docker runs.** One container, one SQLite file per user, one environment variable for your secret key. No Postgres, no Redis, no managed cloud dependency. Back it up with `cp`.
+
+---
+
+*Self-host it. Fork it. Wire it into whatever you're building.*
+
+---
+
+## Overview
 
 Encrypted credential store for [CList](https://github.com/Downes/CList) and similar client-side web applications.
 
