@@ -33,7 +33,7 @@ When a user registers or logs in, the browser derives two keys from their passwo
 
 Stored values are opaque ciphertext blobs. The server cannot decrypt them. Even if the database is compromised, credentials are safe as long as passwords are strong.
 
-On successful login the server issues a long-lived opaque Bearer token (`username:hex32`), stored as a SHA-256 hash in a per-user SQLite database.
+On successful login the server issues a signed **ES256 JWT** (30-day expiry). Legacy opaque tokens (`username:hex32`) are still accepted for backwards compatibility but are no longer issued.
 
 ### API endpoints
 
@@ -43,6 +43,10 @@ On successful login the server issues a long-lived opaque Bearer token (`usernam
 | POST | `/auth/login` | — | Authenticate, receive token |
 | POST | `/auth/logout` | Bearer | Invalidate token |
 | GET  | `/auth/verify` | Bearer | Validate token (used by proxyp) |
+| PUT  | `/auth/did` | Bearer | Register a DID document |
+| DELETE | `/auth/did` | Bearer | Remove a DID document |
+| GET  | `/.well-known/jwks.json` | — | Public key for JWT verification |
+| GET  | `/users/{username}/did.json` | — | Serve public DID document |
 | GET  | `/get_kvs/` | Bearer | Retrieve all key-value pairs |
 | POST | `/add_kv/` | Bearer | Add a new key-value pair |
 | POST | `/update_kv/` | Bearer | Update an existing pair |
@@ -53,7 +57,7 @@ Rate limiting is applied to `/auth/login` (10/min) and `/auth/register` (5/hour)
 ## Stack
 
 - **Python 3.11** / **Flask** — API server
-- **Gunicorn** — WSGI server (2 workers)
+- **Gunicorn** — WSGI server (1 worker)
 - **SQLite** — per-user database files in `/data/`
 - **bcrypt** — password hashing
 - **flask-limiter** — rate limiting
@@ -130,10 +134,10 @@ mkdir -p /srv/www/kvstore.yourdomain.com
 
 ### 4. Configure CList
 
-In CList's `index.html`, set:
+In CList, users select their account server from a dropdown in the login screen. To add your kvstore instance as an option, add it to the `serverSelect` dropdown in `index.html`:
 
-```javascript
-let flaskSiteUrl = 'https://kvstore.yourdomain.com';
+```html
+<option value="https://kvstore.yourdomain.com">kvstore.yourdomain.com</option>
 ```
 
 ## Security notes
