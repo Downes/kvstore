@@ -62,6 +62,22 @@ JavaScript it is served.
 | Browser extension (app store distributed) | JS served by a third-party gatekeeper | Extension author themselves |
 | Strong password | Makes offline brute-force of captured authHash infeasible | Everything else |
 
+## Client-side token handling rules
+
+The JWT issued on login is a 30-day credential. Once stolen it cannot be revoked (see "Can" section above). Treat it accordingly.
+
+**Never embed the token in a URL** — not in query strings, not in hash fragments. URLs appear in:
+- Browser history
+- Server access logs (for query strings)
+- `Referer` headers sent to third-party resources on the destination page
+- JavaScript readable via `window.location.hash` or `window.location.search`
+
+The last point is the critical one: if you pass `#t=<jwt>` to a profile URL derived from a user-controlled DID, the page at that URL can read the token in JavaScript and exfiltrate it. The DID host is federated and untrusted.
+
+**Rule**: the token must only travel in the `Authorization: Bearer` request header, to endpoints whose domain is the user's own configured kvstore URL. It must never appear in any URL passed to `href`, `src`, `window.open`, `window.location`, or `fetch` URLs for cross-origin requests.
+
+_This was violated in annotate.js `_didToProfileUrl` (fixed 2026-05-24): the function was appending `#t=<jwt>` to profile page URLs constructed from annotation creator DIDs. Removed — the receiving profile page obtains the token from the user's existing kvstore session if the user chooses to follow._
+
 ## The honest bottom line
 
 For a web app, you cannot fully eliminate trust in the operator. The best achievable goal is to

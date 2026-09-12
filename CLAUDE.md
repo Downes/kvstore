@@ -10,6 +10,15 @@ can verify locally without calling back to kvstore.
 - Name: kvstore  Port: 5000 (internal only)
 - Domain: kvstore.mooc.ca — LIVE, HTTPS via Caddy
 
+## IMPORTANT: Two instances share this code
+A second instance runs from `/srv/apps/kvstore2/` (domain: kvstore.downes.ca).
+Its `docker-compose.yml` builds from `../kvstore` — this directory.
+**Any time you rebuild or update kvstore, you must also rebuild kvstore2:**
+```bash
+cd /srv/apps/kvstore  && docker compose up -d --build
+cd /srv/apps/kvstore2 && docker compose up -d --build
+```
+
 ## Network
 - web (external) — shared with other apps
 
@@ -54,6 +63,15 @@ Python 3.11 / Flask / Gunicorn (1 worker).
 - DATA_DIR    — path to SQLite DB and key directory (default: /data)
 - ISSUER_URL  — public URL of this kvstore instance, embedded as JWT `iss` claim
                 (default: https://kvstore.mooc.ca)
+- ALLOWED_KVSTORE_URLS — comma-separated kvstore instances a `/users/<u>/did.html`
+                profile page's Follow link is allowed to forward the visitor's
+                token to via the `mykvstore` query param (default:
+                https://kvstore.mooc.ca,https://kvstore.downes.ca). `mykvstore`
+                is attacker-controllable input — `get_did_profile()` in routes.py
+                zeroes it out if it's not in this list, since an unchecked value
+                would let a crafted profile link exfiltrate a visitor's JWT to
+                an arbitrary domain. See SECURITY.md's "Client-side token
+                handling rules" section.
 
 ## Rate limiting
 - /auth/login: 10/min (flask-limiter, in-memory)

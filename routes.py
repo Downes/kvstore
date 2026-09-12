@@ -4,7 +4,7 @@ import json
 import time
 import logging
 from datetime import datetime
-from flask import Blueprint, request, jsonify, Response
+from flask import Blueprint, request, jsonify, Response, render_template
 from urllib.parse import urlparse
 from config import Config
 from db_utils import get_user_session
@@ -252,3 +252,116 @@ def get_did_document(username):
     }
 
     return Response(json.dumps(doc, indent=2), status=200, mimetype='application/did+ld+json')
+
+
+@routes_bp.route('/users/<username>/did.html', methods=['GET'])
+def get_did_profile(username):
+    """Human-readable public profile page for a kvstore user."""
+    session = get_user_session(username)
+    try:
+        user = session.query(User).filter_by(username=username).first()
+        if not user:
+            return "User not found", 404
+        profile = {}
+        if user.did_document:
+            try:
+                profile = json.loads(user.did_document)
+            except (ValueError, TypeError):
+                pass
+    finally:
+        session.close()
+
+    domain  = urlparse(Config.ISSUER_URL).netloc
+    did_web = f"did:web:{domain}:users:{username}"
+
+    # Collect linked social accounts from alsoKnownAs, excluding bare DID keys
+    linked = [a for a in profile.get('alsoKnownAs', []) if not a.startswith('did:key:')]
+
+    # mykvstore is attacker-controllable (query string) and drives where the
+    # Follow link forwards the visitor's own token — only allow it through if
+    # it's a kvstore instance we actually know about.
+    mykvstore = request.args.get('mykvstore', '').strip()
+    if mykvstore not in Config.ALLOWED_KVSTORE_URLS:
+        mykvstore = ''
+
+    return render_template('did_profile.html',
+        username=username,
+        did=did_web,
+        issuer_url=Config.ISSUER_URL,
+        linked_accounts=linked,
+        mykvstore=mykvstore,
+    )
+
+
+@routes_bp.route('/users/by-handle', methods=['GET'])
+def lookup_by_handle():
+    """Find users whose DID document lists the given social handle.
+    Public — no auth required. Searches SocialWebAccount service endpoints
+    and alsoKnownAs entries across all registered users.
+    Returns: {"results": [{"did": ..., "username": ...}, ...]}
+    """
+    handle = request.args.get('handle', '').strip()
+    if not handle:
+        return jsonify({'error': 'handle required'}), 400
+
+    handle_lower = handle.lower()
+    domain   = urlparse(Config.ISSUER_URL).netloc
+    data_dir = os.environ.get('DATA_DIR', '/data')
+
+    matches = []
+    try:
+        db_files = sorted(f for f in os.listdir(data_dir) if f.endswith('.db'))
+    except OSError as e:
+        log.error('by-handle: cannot list data dir: %s', e)
+        return jsonify({'error': 'Server error'}), 500
+
+    for db_file in db_files:
+        username = db_file[:-3]
+        session = get_user_session(username)
+        try:
+            user = session.query(User).filter_by(username=username).first()
+            if not user or not user.did_document:
+                continue
+            try:
+                profile = json.loads(user.did_document)
+            except (ValueError, TypeError):
+                continue
+
+            did_web = f"did:web:{domain}:users:{username}"
+            found = False
+
+            # Primary: SocialWebAccount service endpoints (e.g. "user@mastodon.social")
+            for svc in profile.get('service', []):
+                if svc.get('type') == 'SocialWebAccount':
+                    if svc.get('serviceEndpoint', '').lower() == handle_lower:
+                        matches.append({'did': did_web, 'username': username})
+                        found = True
+                        break
+
+            # Fallback: alsoKnownAs (e.g. "at://user.bsky.social")
+            if not found:
+                for aka in profile.get('alsoKnownAs', []):
+                    if aka.lower() == handle_lower:
+                        matches.append({'did': did_web, 'username': username})
+                        break
+        finally:
+            session.close()
+
+    if not matches:
+        return jsonify({'error': 'Not found'}), 404
+    return jsonify({'results': matches})
+
+
+@routes_bp.route('/auth/follow', methods=['GET'])
+def follow_page():
+    """Landing page for following a DID. Visitor authenticates here and follow is stored encrypted."""
+    target_did    = request.args.get('did', '').strip()
+    target_display = request.args.get('display', target_did).strip()
+    if not target_did:
+        return "Missing 'did' parameter", 400
+    return render_template('follow.html',
+        target_did=target_did,
+        target_display=target_display,
+        issuer_url=Config.ISSUER_URL,
+    )
+

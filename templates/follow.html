@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Follow {{ target_display }}</title>
+  <style>
+    body { font-family: sans-serif; max-width: 480px; margin: 3em auto; padding: 0 1em; color: #333; }
+    h1 { font-size: 1.4em; }
+    .target-did { font-size: 0.8em; color: #666; word-break: break-all; margin-bottom: 1.5em; }
+    .hint { font-size: 0.9em; color: #555; margin-bottom: 1em; }
+    label { display: block; margin-top: 1em; font-weight: 600; font-size: 0.9em; }
+    input { width: 100%; padding: 0.5em; margin-top: 0.3em; box-sizing: border-box;
+            border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
+    input:disabled { background: #f5f5f5; color: #777; }
+    button {
+      margin-top: 1.2em; padding: 0.5em 1.4em; background: #4caf50;
+      color: #fff; border: none; border-radius: 4px; font-size: 1em;
+      font-weight: 600; cursor: pointer;
+    }
+    button:hover { background: #388e3c; }
+    button:disabled { background: #aaa; cursor: default; }
+    #status { margin-top: 1em; padding: 0.7em 1em; border-radius: 4px; display: none; }
+    #status.info  { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+    #status.error { background: #fff5f5; color: #c00;    border: 1px solid #f5c6cb; }
+  </style>
+</head>
+<body>
+
+  <h1>Follow {{ target_display }}</h1>
+  <div class="target-did">{{ target_did }}</div>
+
+  <form id="follow-form" autocomplete="on">
+    <p class="hint" id="hint-text">
+      Log in to <strong>{{ issuer_url }}</strong> to follow this person.
+      The follow will be stored encrypted in your account.
+    </p>
+
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" autocomplete="username" required>
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+    <button type="submit" id="follow-btn">Follow</button>
+  </form>
+
+  <div id="status"></div>
+
+  <script>
+    const TARGET_DID     = {{ target_did | tojson }};
+    const TARGET_DISPLAY = {{ target_display | tojson }};
+    const KVSTORE_URL    = {{ issuer_url | tojson }};
+    const KV_KEY         = 'social:following:' + TARGET_DID;
+
+    // Token passed from CList via URL fragment (not sent to server)
+    const _hash = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const _preToken = _hash.get('t') ? decodeURIComponent(_hash.get('t')) : null;
+
+    function setStatus(msg, type) {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = type;
+      el.style.display = 'block';
+    }
+
+    // Decode JWT payload without verifying (username is public info in the claim)
+    function jwtUsername(token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        return payload.username || payload.sub || null;
+      } catch { return null; }
+    }
+
+    // If we have a pre-authenticated token, prefill username and only ask for password
+    if (_preToken) {
+      const detectedUsername = jwtUsername(_preToken);
+      if (detectedUsername) {
+        const uField = document.getElementById('username');
+        uField.value = detectedUsername;
+        uField.disabled = true;
+        document.getElementById('hint-text').textContent =
+          `You are already logged in as ${detectedUsername}. Enter your password to confirm — ` +
+          `it is needed to encrypt the follow record.`;
+      }
+    }
+
+    // --- Crypto (mirrors crypto_utils.js in CList) ---
+
+    async function deriveAuthHash(password, username) {
+      const enc = new TextEncoder();
+      const km = await crypto.subtle.importKey(
+        'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits']
+      );
+      const bits = await crypto.subtle.deriveBits(
+        { name: 'PBKDF2', salt: enc.encode(username + '_auth'), iterations: 100000, hash: 'SHA-256' },
+        km, 256
+      );
+      return Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    async function deriveEncKey(password, username) {
+      const enc = new TextEncoder();
+      const km = await crypto.subtle.importKey(
+        'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveKey']
+      );
+      return crypto.subtle.deriveKey(
+        { name: 'PBKDF2', salt: enc.encode(username + '_enc'), iterations: 100000, hash: 'SHA-256' },
+        km,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt']
+      );
+    }
+
+    async function encryptWithKey(cryptoKey, plaintext) {
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const buf = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv },
+        cryptoKey,
+        new TextEncoder().encode(plaintext)
+      );
+      const combined = new Uint8Array(12 + buf.byteLength);
+      combined.set(iv, 0);
+      combined.set(new Uint8Array(buf), 12);
+      return btoa(String.fromCharCode(...combined));
+    }
+
+    // --- Follow flow ---
+
+    document.getElementById('follow-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const btn      = document.getElementById('follow-btn');
+      const username = document.getElementById('username').value.trim().toLowerCase();
+      const password = document.getElementById('password').value;
+      if (!username || !password) return;
+
+      btn.disabled = true;
+      btn.textContent = 'Working…';
+      setStatus('Deriving keys…', 'info');
+
+      try {
+        // Always derive encKey (needs password); only derive authHash if we lack a token
+        const tasks = [deriveEncKey(password, username)];
+        if (!_preToken) tasks.push(deriveAuthHash(password, username));
+        const results = await Promise.all(tasks);
+        const encKey   = results[0];
+        let   token    = _preToken;
+
+        if (!token) {
+          const authHash = results[1];
+          setStatus('Logging in…', 'info');
+          const loginResp = await fetch(`${KVSTORE_URL}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, auth_hash: authHash }),
+          });
+          if (!loginResp.ok) {
+            const err = await loginResp.json().catch(() => ({}));
+            setStatus('Login failed: ' + (err.error || loginResp.status), 'error');
+            btn.disabled = false; btn.textContent = 'Follow';
+            return;
+          }
+          token = (await loginResp.json()).token;
+        }
+
+        // Encrypt follow record
+        const record = JSON.stringify({
+          did:     TARGET_DID,
+          display: TARGET_DISPLAY,
+          since:   new Date().toISOString().slice(0, 10),
+        });
+        const encrypted = await encryptWithKey(encKey, record);
+
+        // Store in KV — try add, then update if already exists
+        setStatus('Storing follow…', 'info');
+        const headers = {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token,
+        };
+        let storeResp = await fetch(`${KVSTORE_URL}/add_kv/`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ key: KV_KEY, value: encrypted }),
+        });
+        if (storeResp.status === 409) {
+          storeResp = await fetch(`${KVSTORE_URL}/update_kv/`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ key: KV_KEY, value: encrypted }),
+          });
+        }
+        if (storeResp.ok) {
+          setStatus(`You are now following ${TARGET_DISPLAY}.`, 'info');
+          document.getElementById('follow-form').style.display = 'none';
+        } else {
+          const err = await storeResp.json().catch(() => ({}));
+          setStatus('Could not store follow: ' + (err.error || storeResp.status), 'error');
+          btn.disabled = false; btn.textContent = 'Follow';
+        }
+      } catch (err) {
+        setStatus('Unexpected error: ' + err.message, 'error');
+        btn.disabled = false; btn.textContent = 'Follow';
+      }
+    });
+  </script>
+
+</body>
+</html>

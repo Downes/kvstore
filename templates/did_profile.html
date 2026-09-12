@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ username }} — Profile</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 2em auto; padding: 0 1em; color: #333; }
+    h1 { font-size: 1.6em; margin-bottom: 0.2em; }
+    .did { font-size: 0.8em; color: #666; word-break: break-all; margin-bottom: 1.5em; }
+    .did a { color: #666; }
+    .linked { list-style: none; padding: 0; }
+    .linked li { margin: 0.4em 0; }
+    .linked a { color: #1a73e8; text-decoration: none; }
+    .linked a:hover { text-decoration: underline; }
+    .follow-btn {
+      display: inline-block; margin-top: 1.5em;
+      padding: 0.5em 1.2em; background: #4caf50; color: #fff;
+      border-radius: 4px; text-decoration: none; font-weight: 600;
+    }
+    .follow-btn:hover { background: #388e3c; }
+    .section-label { font-weight: 600; color: #555; margin: 1.2em 0 0.4em; }
+  </style>
+</head>
+<body>
+
+  <h1>{{ username }}</h1>
+  <div class="did">
+    <abbr title="Decentralised Identifier">DID</abbr>:
+    <a href="{{ issuer_url }}/users/{{ username }}/did.json" target="_blank">{{ did }}</a>
+  </div>
+
+  {% if linked_accounts %}
+  <div class="section-label">Linked accounts</div>
+  <ul class="linked">
+    {% for acct in linked_accounts %}
+    <li><a href="{{ acct }}" target="_blank" rel="noopener">{{ acct }}</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  {% if mykvstore %}
+  <a class="follow-btn" id="follow-link"
+     href="{{ mykvstore }}/auth/follow?did={{ did | urlencode }}&display={{ username | urlencode }}">
+    Follow {{ username }}
+  </a>
+  {% endif %}
+
+  <script>
+    // If the visitor's CList passed a token in the URL fragment, forward it to
+    // the Follow link so the follow page can skip re-authentication.
+    const hash = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const token = hash.get('t');
+    const followLink = document.getElementById('follow-link');
+    if (followLink && token) {
+      followLink.href += '#t=' + encodeURIComponent(token);
+    }
+  </script>
+
+</body>
+</html>
