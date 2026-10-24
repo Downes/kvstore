@@ -133,8 +133,15 @@ kvstore itself when verifying tokens on its own `/auth/verify` and KV routes.
 
 kvstore verifies tokens on two code paths:
 
-- **`/auth/verify`** (`auth.py`) — called by legacy services (proxyp) that do not
-  verify JWTs locally and still use the callback style.
+- **`/auth/verify`** (`auth.py`) — the callback style. As of the Pattern B
+  migration (2026-10), `proxyp` is the only remaining caller of this path
+  for live JWTs — it's Perl/PSGI with no JWT library and is intentionally
+  kept on the callback. Every other app on this server (pastebin, survey,
+  localrss_reader, discussions, annotations, opml2json, collab) now
+  verifies JWTs locally per §4, via the shared `clist-kvstore-auth` package
+  (Node: hand-mirrored in `collab/auth.js`). Those apps still call this
+  endpoint, but only as a fallback for **opaque** (pre-migration) tokens,
+  which carry no `iss` and can't be verified locally — see §6.
 - **`token_required` decorator** (`routes.py`) — protects all KV endpoints
   (`/get_kvs/`, `/add_kv/`, `/update_kv/`, `/delete_kv/`).
 
@@ -166,6 +173,20 @@ Because the JWT `iss` claim carries the kvstore URL and the JWKS endpoint is pub
 users can run their own kvstore instance and use it with any app that supports this
 flow. The app does not need to know the kvstore URL in advance — it reads it from
 the JWT itself.
+
+As of the Pattern B migration (2026-10), this is no longer aspirational for
+this server's own apps: pastebin, survey, localrss_reader, discussions,
+annotations, opml2json, and collab all verify a JWT's signature against
+*whatever* instance its `iss` names, with no allowlist gating verification
+itself — only `proxyp` is still callback-only (see §5). An issuer allowlist
+does still show up in these apps, but scoped to one narrower purpose:
+deciding whether to grant *admin* rights based on which instance vouched
+for the user (`ADMIN_USERNAMES` + `ALLOWED_KVSTORE_URLS`/the app's own
+`KVSTORE_URL`), never whether to accept the token at all. Verified
+end-to-end: a JWT issued by one live instance (`kvstore.downes.ca`) was
+accepted for ordinary auth by an app configured against the other
+(`kvstore.mooc.ca`), and correctly rejected only when that same token was
+checked against an admin-only route.
 
 The app's frontend needs to let users enter their kvstore URL at login time (rather
 than hardcoding a default). CARE does this via the "Identity server" field on its

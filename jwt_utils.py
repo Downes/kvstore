@@ -1,5 +1,6 @@
 # jwt_utils.py — EC P-256 keypair management, JWT issuance, and JWKS export
 import base64
+import hashlib
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -41,6 +42,23 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b'=').decode()
 
 
+def _key_id() -> str:
+    """Stable kid for the current signing key, derived from the public key
+    itself so it doesn't change across restarts. Only one key exists today,
+    but remote JWKS clients (PyJWKClient et al.) require every key to carry
+    a kid to even be considered a signing key — without this, local JWKS
+    verification fails outright regardless of `use: sig`. Also lets a
+    future key rotation publish old + new keys side by side and have
+    verifiers pick the right one via the token header's kid (see
+    /srv/TODO.md)."""
+    nums = _public_key.public_numbers()
+    raw = nums.x.to_bytes(32, 'big') + nums.y.to_bytes(32, 'big')
+    return hashlib.sha256(raw).hexdigest()[:16]
+
+
+_kid = _key_id()
+
+
 def get_jwks() -> dict:
     """Return the public key as a JWKS document."""
     nums = _public_key.public_numbers()
@@ -50,6 +68,7 @@ def get_jwks() -> dict:
             'crv': 'P-256',
             'use': 'sig',
             'alg': 'ES256',
+            'kid': _kid,
             'x': _b64url(nums.x.to_bytes(32, 'big')),
             'y': _b64url(nums.y.to_bytes(32, 'big')),
         }]
@@ -64,6 +83,7 @@ def issue_jwt(username: str, issuer_url: str) -> tuple:
         {'sub': username, 'iss': issuer_url, 'iat': now, 'exp': expires},
         _private_key,
         algorithm='ES256',
+        headers={'kid': _kid},
     )
     return token, expires
 

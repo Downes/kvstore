@@ -44,7 +44,14 @@ backwards compatibility with existing CList/proxyp sessions but are no longer is
 
 ## JWKS endpoint
 `GET /.well-known/jwks.json` — public, no auth required.
-Returns the EC P-256 public key. Private key persisted to `/data/jwk_private.pem`.
+Returns the EC P-256 public key, with a `kid` derived deterministically from
+the public key itself (SHA-256 of x||y, truncated) — added 2026-10-23.
+Required for `PyJWKClient`-style local JWKS verification: it filters out any
+JWK lacking a `kid`, and matching a token to a key also requires the token's
+own header to carry a `kid`, so `issue_jwt()` sets the same value in the JWT
+header. Only one key exists today — see /srv/TODO.md "kvstore JWT
+signing-key rotation" for what's needed to support rotation. Private key
+persisted to `/data/jwk_private.pem`.
 
 ## KV values
 All values are AES-GCM encrypted client-side with encKey before being sent.
