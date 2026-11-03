@@ -11,6 +11,7 @@ services:
     env_file: .env
     volumes:
       - kvstore_data:/data
+      - /srv/www/clist.mooc.ca:/clist_static
     networks:
       - web
 

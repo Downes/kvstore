@@ -18,9 +18,21 @@ Its `docker-compose.yml` builds from `../kvstore` — this directory.
 cd /srv/apps/kvstore  && docker compose up -d --build
 cd /srv/apps/kvstore2 && docker compose up -d --build
 ```
+**Exception: the `defaults.js` write-back feature (below) is kvstore-only.** It activates
+purely because `CLIST_STATIC_DIR` is set in kvstore's `.env` and unset in kvstore2's — no
+code branches on which instance it is. kvstore2 is an alternate backend for the same
+clist.mooc.ca install kvstore already writes to, not a second CList install of its own.
 
 ## Network
 - web (external) — shared with other apps
+
+## Volumes
+- `kvstore_data` (named volume) — per-user SQLite DBs and `_settings.db`, mounted at `/data`
+- `/srv/www/clist.mooc.ca:/clist_static` (bind mount) — gives this container filesystem
+  write access to CList's static directory, so it can rewrite `defaults.js` on disk
+  (see "Admin settings" below). Covers the whole directory, not just `defaults.js`,
+  because the atomic write (`os.replace()` of a temp file) requires the temp file and
+  target to share a directory. kvstore2 does **not** have this mount.
 
 ## CORS
 Handled entirely in the Caddyfile (NOT flask-cors). flask-cors fails to inject headers
@@ -79,6 +91,42 @@ Python 3.11 / Flask / Gunicorn (1 worker).
                 would let a crafted profile link exfiltrate a visitor's JWT to
                 an arbitrary domain. See SECURITY.md's "Client-side token
                 handling rules" section.
+- ADMIN_USERNAMES — comma-separated usernames allowed to read/write `/admin/settings`
+                (checked via `clist_server_admin.sqlite.is_admin`, same as pastebin/survey).
+- CLIST_STATIC_DIR — filesystem path (inside the container) to the paired CList static
+                install's directory, where `defaults.js` lives. Default: unset/empty,
+                meaning this instance has no paired CList install and `_write_defaults_js()`
+                in app.py is a no-op (e.g. kvstore2 — see "Two instances share this code").
+                kvstore's value is `/clist_static`, backed by the bind mount in Volumes above.
+- DEFAULT_LOCALRSS, DEFAULT_PASTEBIN, DEFAULT_SURVEY, DEFAULT_ANNOTATIONS, DEFAULT_COLLAB,
+                DEFAULT_DISCUSSIONS — `.env`-sourced fallback values for the matching
+                `DEFAULT_*` settings, used as the effective value before any admin override
+                is saved (defaults match CList's own stock `defaults.js` values, e.g.
+                https://localrss.downes.ca, https://pastebin.mooc.ca, etc.).
+
+## Admin settings
+Adopted the shared `clist-server-admin` pattern (pinned by commit SHA in
+requirements.txt — see /srv/shared/clist-server-admin), same as pastebin/survey.
+Settings live in their own small sqlite file, `/data/_settings.db` — kvstore's only
+app-wide table; every other table here is per-user (see Database section above).
+
+- `GET/PUT /admin/settings` — admin-only (Bearer token, username in `ADMIN_USERNAMES`).
+  Fields: `ENABLED` (boolean — **display-only, not wired to a kill-switch**: unlike
+  pastebin/survey, disabling kvstore would break login for every CList user, so this
+  flag is kept only for App Settings panel consistency), plus one `url` field per remote
+  service CList depends on: `DEFAULT_LOCALRSS`, `DEFAULT_PASTEBIN`, `DEFAULT_SURVEY`,
+  `DEFAULT_ANNOTATIONS`, `DEFAULT_COLLAB`, `DEFAULT_DISCUSSIONS`.
+- No `GET /public/settings` route — removed. Instead, every successful `PUT
+  /admin/settings` triggers `_write_defaults_js()` (an `after_request` hook in app.py,
+  since `register_admin_settings_routes` has no save-hook parameter), which regenerates
+  `defaults.js` directly on disk in the paired CList install (via `CLIST_STATIC_DIR`,
+  see Environment variables above and Volumes above). `_write_defaults_js()` also runs
+  once on every container start, so the file stays in sync with the DB across restarts.
+  CList reads `window.CList.defaults.*` from that file directly — no API call, no CORS
+  concern, works even for `file://` local installs.
+- Consumed by CList's `js/kvstore.js` (`ADMIN_SETTINGS_APPS`), which the "KVStore" entry
+  (and five others, one per service) edits via the App Settings panel.
+- See /srv/www/clist.mooc.ca/defaults.js and its CLAUDE.md for the CList side of this.
 
 ## Rate limiting
 - /auth/login: 10/min (flask-limiter, in-memory)
