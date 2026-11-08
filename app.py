@@ -66,6 +66,12 @@ SETTINGS_SCHEMA = [
         key="DEFAULT_DISCUSSIONS", label="Default Discussions", type="url", sensitive=False, validate=_validate_url,
         help="Written to the paired CList install's defaults.js (window.CList.defaults.DISCUSSIONS).",
     ),
+    SettingField(
+        key="DEFAULT_PROXYP", label="Default Proxyp", type="url", sensitive=False, validate=_validate_url,
+        help="Written to the paired CList install's defaults.js (window.CList.defaults.PROXYP). "
+             "Proxyp has its own separate ENABLED/ACCESS_KEY settings for unauthenticated "
+             "access — see /srv/apps/proxyp/CLAUDE.md — unrelated to this base URL.",
+    ),
 ]
 
 SETTINGS_DEFAULTS = {
@@ -76,6 +82,7 @@ SETTINGS_DEFAULTS = {
     "DEFAULT_ANNOTATIONS": os.environ.get("DEFAULT_ANNOTATIONS", "https://annotations.mooc.ca"),
     "DEFAULT_COLLAB": os.environ.get("DEFAULT_COLLAB", "https://collab.mooc.ca"),
     "DEFAULT_DISCUSSIONS": os.environ.get("DEFAULT_DISCUSSIONS", "https://discussions.mooc.ca"),
+    "DEFAULT_PROXYP": os.environ.get("DEFAULT_PROXYP", "https://proxyp.mooc.ca"),
 }
 
 # Maps each DEFAULT_* setting to its property name in the paired CList
@@ -88,6 +95,7 @@ DEFAULTS_JS_KEYS = {
     "DEFAULT_ANNOTATIONS": "ANNOTATIONS",
     "DEFAULT_COLLAB": "COLLAB",
     "DEFAULT_DISCUSSIONS": "DISCUSSIONS",
+    "DEFAULT_PROXYP": "PROXYP",
 }
 
 

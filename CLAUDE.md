@@ -99,10 +99,12 @@ Python 3.11 / Flask / Gunicorn (1 worker).
                 in app.py is a no-op (e.g. kvstore2 — see "Two instances share this code").
                 kvstore's value is `/clist_static`, backed by the bind mount in Volumes above.
 - DEFAULT_LOCALRSS, DEFAULT_PASTEBIN, DEFAULT_SURVEY, DEFAULT_ANNOTATIONS, DEFAULT_COLLAB,
-                DEFAULT_DISCUSSIONS — `.env`-sourced fallback values for the matching
-                `DEFAULT_*` settings, used as the effective value before any admin override
-                is saved (defaults match CList's own stock `defaults.js` values, e.g.
-                https://localrss.downes.ca, https://pastebin.mooc.ca, etc.).
+                DEFAULT_DISCUSSIONS, DEFAULT_PROXYP — `.env`-sourced fallback values for the
+                matching `DEFAULT_*` settings, used as the effective value before any admin
+                override is saved (defaults match CList's own stock `defaults.js` values, e.g.
+                https://localrss.downes.ca, https://pastebin.mooc.ca, etc.). DEFAULT_PROXYP is
+                base URL only — proxyp's own ENABLED/ACCESS_KEY settings (unauthenticated-access
+                gate) live entirely on proxyp's own side, see /srv/apps/proxyp/CLAUDE.md.
 
 ## Admin settings
 Adopted the shared `clist-server-admin` pattern (pinned by commit SHA in
@@ -115,7 +117,7 @@ app-wide table; every other table here is per-user (see Database section above).
   pastebin/survey, disabling kvstore would break login for every CList user, so this
   flag is kept only for App Settings panel consistency), plus one `url` field per remote
   service CList depends on: `DEFAULT_LOCALRSS`, `DEFAULT_PASTEBIN`, `DEFAULT_SURVEY`,
-  `DEFAULT_ANNOTATIONS`, `DEFAULT_COLLAB`, `DEFAULT_DISCUSSIONS`.
+  `DEFAULT_ANNOTATIONS`, `DEFAULT_COLLAB`, `DEFAULT_DISCUSSIONS`, `DEFAULT_PROXYP`.
 - No `GET /public/settings` route — removed. Instead, every successful `PUT
   /admin/settings` triggers `_write_defaults_js()` (an `after_request` hook in app.py,
   since `register_admin_settings_routes` has no save-hook parameter), which regenerates
